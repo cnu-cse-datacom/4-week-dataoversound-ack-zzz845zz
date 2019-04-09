@@ -118,39 +118,33 @@ def extract_packet(freqs):
     bit_chunks = [int(round((f - START_HZ) / STEP_HZ)) for f in freqs]
     bit_chunks = [c for c in bit_chunks[1:] if 0 <= c < (2 ** BITS)]
 
-    # save error bytes everytime
-    global error_byte_chunks
-    error_byte_chunks = bit_chunks[-8:]
-
     return bytearray(decode_bitchunks(BITS, bit_chunks))
 
 def display(s):
     cprint(figlet_format(s.replace(' ', '   '), font='doom'), 'yellow')
 
 
-TIME_DATA = 0.1 # 0.1 sec per data
-# 0.1 sec per data.
-# 2 data per 1 ASCII
-
-# list = np.zeros(0, dtype=np.int)    # make int array
-#list = []
-
 def make_sin(step_list, interval, frame_rate=44100):
 
     sin = np.zeros(0)
     time_array = np.arange(0., interval, 1/frame_rate)
 
+    # sound start with HANDSHAKE_START_HZ
+    start_sin = np.sin(2*np.pi * HANDSHAKE_START_HZ * time_array)
+    sin = np.append(sin, start_sin)
+
     # make sin from step_list
     for step in step_list:
         # make freq_hz
         freq_hz = START_HZ + STEP_HZ*step
-
         # make new sin array
         new_sin = np.sin(2*np.pi * freq_hz * time_array)
-
         # attach new sin array
         sin = np.append(sin, new_sin)
 
+    # sound end with HANDSHAKE_END_HZ
+    end_sin = np.sin(2*np.pi * HANDSHAKE_END_HZ * time_array)
+    sin = np.append(sin, end_sin)
 
     # return completed sin list
     return sin
@@ -158,11 +152,16 @@ def make_sin(step_list, interval, frame_rate=44100):
 def playSound(sin, total_time, frame_rate=44100):
     # total_time = total sound's play time
     sd.play(sin, frame_rate)
-    sd.sleep(total_time)
+
+    # +500 is safety line for HANDSHAKE_START_HZ, HANDSHAKE_END_HZ
+    sd.sleep(total_time+500)
 
 def extract_step(string):
     # string = inputted characters without my student number(201502111)
     list = []
+
+    # attach encoding error bytes
+    string = RSCodec(FEC_BYTES).encode(string)
 
     # standard to sparate from 1 char(byte), in this case, it is 16
     # a=97, 0110 / 0001,  left=0110(bin)=6(dec)=97/16, right=0001(bin)=1(dec)=97%16
@@ -170,15 +169,11 @@ def extract_step(string):
 
     # make step list from string
     for s in string:
+        s = int(ascii(s))
         # example. 'a'=97(dec)=0110 0001(bin)
-        list.append(int(ord(s)/standard_data)) # 0110
-        list.append(ord(s)%standard_data) # 0001
+        list.append(s//standard_data) # 0110
+        list.append(s%standard_data) # 0001
 
-    # attach step from error byte chunks
-    for step in error_byte_chunks:
-        list.append(step)
-
-    # return completed step list
     return list
 
 def play_linux(string, interval, frame_rate=44100):
@@ -186,8 +181,8 @@ def play_linux(string, interval, frame_rate=44100):
 
     num_word = len(string)  # 201502111
     num_data = num_word * 2  # 1 word = 2 data
-
     num_error_data = FEC_BYTES*2  # 4 error byte, 8 data
+
     total_time = (num_data + num_error_data)*interval  # time for all data
 
     # extract step list from string
